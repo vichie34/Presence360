@@ -92,7 +92,7 @@ const AttendanceSystem = () => {
   const [user, setUser] = useState(null);
   const [deviceId, setDeviceId] = useState('');
   const [events, setEvents] = useState([]);
-  const [attendanceRecords, setAttendanceRecords] = useState([]);
+  const [setAttendanceRecords] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
   const [location, setLocation] = useState(null);
