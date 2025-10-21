@@ -307,8 +307,9 @@ const AttendanceSystem = () => {
       };
       const encoded = btoa(JSON.stringify(qrPayload));
 
-      // Use Google Charts API to get QR image URL (simple)
-      const qrUrl = `https://chart.googleapis.com/chart?chs=300x300&cht=qr&chl=${encodeURIComponent(encoded)}`;
+      // Use api.qrserver.com to get QR image URL (simple, reliable, free)
+      // Example: https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=...
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(encoded)}`;
       setQrData(qrUrl);
 
       showMessage('Event created & QR generated!', 'success');
