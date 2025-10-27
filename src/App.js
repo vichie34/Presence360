@@ -309,8 +309,9 @@ const AttendanceSystem = () => {
       };
       console.log('Creating QR with payload:', qrPayload);
       const encoded = btoa(JSON.stringify(qrPayload));
+      console.log('Encoded payload:', encoded);
 
-      // Store the base64 encoded payload for the QR
+      // Store the encoded payload directly - this is what needs to be scanned
       setQrData(encoded);
 
       showMessage('Event created & QR generated!', 'success');
@@ -414,35 +415,24 @@ const AttendanceSystem = () => {
         return;
       }
 
-      // First try: Treat input as full URL and extract data parameter
-      let cleanedRaw = raw;
-      try {
-        if (raw.includes('api.qrserver.com')) {
-          const url = new URL(raw);
-          cleanedRaw = url.searchParams.get('data') || raw;
-          console.log('Extracted data from URL:', cleanedRaw);
-        }
-      } catch (e) {
-        console.log('Not a URL, using raw input');
-      }
-
-      // Decode QR payload. Support two formats:
-      // 1) base64-encoded JSON: { eventId, expiry }
-      // 2) plain eventId string (legacy/simple)
+      // The input should be the base64 encoded payload directly
+      console.log('Processing input payload:', raw);
       let eventId = null;
       let expiry = null;
+
       try {
-        console.log('Attempting to decode QR payload:', cleanedRaw);
-        const decoded = JSON.parse(atob(cleanedRaw));
-        console.log('Successfully decoded JSON:', decoded);
+        const decoded = JSON.parse(atob(raw));
+        console.log('Successfully decoded payload:', decoded);
+        if (!decoded.eventId) {
+          throw new Error('No eventId in decoded data');
+        }
         eventId = decoded.eventId;
         expiry = decoded.expiry || null;
       } catch (err) {
-        console.log('Base64 JSON decode failed:', err);
-        console.log('Treating as plain eventId');
-        // Not base64 JSON — treat raw as plain eventId
-        eventId = cleanedRaw;
-        expiry = null;
+        console.error('Failed to decode payload:', err);
+        setMessage({ type: 'error', text: 'Invalid QR code format. Please scan again.' });
+        setLoading(false);
+        return;
       }
 
       if (!eventId) {
@@ -902,6 +892,12 @@ const AttendanceSystem = () => {
                       src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${qrData}`}
                       alt="Event QR"
                       className="w-56 h-56" />
+                  </div>
+                  <div className="mt-4 px-4 py-3 bg-gray-50 rounded-lg">
+                    <p className="text-sm text-gray-600 mb-2">QR Code Text (for testing):</p>
+                    <p className="text-xs font-mono bg-white p-2 rounded border border-gray-200 break-all select-all">
+                      {qrData}
+                    </p>
                   </div>
                   <p className="text-sm text-gray-500 mt-3">Use this QR for attendees</p>
                   <button
