@@ -92,7 +92,7 @@ const AttendanceSystem = () => {
   const [user, setUser] = useState(null);
   const [deviceId, setDeviceId] = useState('');
   const [events, setEvents] = useState([]);
-  const [setAttendanceRecords] = useState([]);
+  const [attendanceRecords, setAttendanceRecords] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
   const [location, setLocation] = useState(null);
@@ -108,7 +108,6 @@ const AttendanceSystem = () => {
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [qrData, setQrData] = useState('');
-
   // Attendee scan
   const [scanInput, setScanInput] = useState('');
 
@@ -269,13 +268,16 @@ const AttendanceSystem = () => {
 
   const fetchUserAttendance = async (uid) => {
     try {
+      console.log('Fetching attendance for user:', uid);
       const q = query(collection(db, 'attendance'), where('userId', '==', uid));
       const snap = await getDocs(q);
       const arr = [];
       snap.forEach(docSnap => arr.push({ id: docSnap.id, ...docSnap.data() }));
+      console.log('Found attendance records:', arr.length);
       setAttendanceRecords(arr);
     } catch (err) {
       console.error('fetchUserAttendance err:', err);
+      setMessage({ type: 'error', text: 'Failed to load attendance records.' });
     }
   };
 
@@ -305,12 +307,11 @@ const AttendanceSystem = () => {
         eventId,
         expiry: new Date(endTime).toISOString()
       };
+      console.log('Creating QR with payload:', qrPayload);
       const encoded = btoa(JSON.stringify(qrPayload));
 
-      // Use api.qrserver.com to get QR image URL (simple, reliable, free)
-      // Example: https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=...
-      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(encoded)}`;
-      setQrData(qrUrl);
+      // Store the base64 encoded payload for the QR
+      setQrData(encoded);
 
       showMessage('Event created & QR generated!', 'success');
       setEventName('');
@@ -318,6 +319,7 @@ const AttendanceSystem = () => {
       setEndTime('');
     } catch (err) {
       console.error('Error creating event:', err);
+      console.error('Event creation stack:', err.stack);
       showMessage('Failed to create event: ' + err.message, 'error');
     } finally {
       setLoading(false);
@@ -399,6 +401,7 @@ const AttendanceSystem = () => {
     }
 
     try {
+      console.log('Starting attendance marking with input:', code);
       const raw = code;
       if (!raw) {
         setMessage({ type: 'error', text: 'QR code is required.' });
@@ -411,38 +414,79 @@ const AttendanceSystem = () => {
         return;
       }
 
-      // Decode QR payload
-      let decoded;
+      // First try: Treat input as full URL and extract data parameter
+      let cleanedRaw = raw;
       try {
-        decoded = JSON.parse(atob(raw));
-      } catch (err) {
-        setMessage({ type: 'error', text: 'Invalid QR format.' });
-        setLoading(false);
-        return;
+        if (raw.includes('api.qrserver.com')) {
+          const url = new URL(raw);
+          cleanedRaw = url.searchParams.get('data') || raw;
+          console.log('Extracted data from URL:', cleanedRaw);
+        }
+      } catch (e) {
+        console.log('Not a URL, using raw input');
       }
 
-      const { eventId, expiry } = decoded;
-      if (!eventId || !expiry) {
+      // Decode QR payload. Support two formats:
+      // 1) base64-encoded JSON: { eventId, expiry }
+      // 2) plain eventId string (legacy/simple)
+      let eventId = null;
+      let expiry = null;
+      try {
+        console.log('Attempting to decode QR payload:', cleanedRaw);
+        const decoded = JSON.parse(atob(cleanedRaw));
+        console.log('Successfully decoded JSON:', decoded);
+        eventId = decoded.eventId;
+        expiry = decoded.expiry || null;
+      } catch (err) {
+        console.log('Base64 JSON decode failed:', err);
+        console.log('Treating as plain eventId');
+        // Not base64 JSON — treat raw as plain eventId
+        eventId = cleanedRaw;
+        expiry = null;
+      }
+
+      if (!eventId) {
+        console.error('No eventId found in payload');
         setMessage({ type: 'error', text: 'Malformed QR code.' });
         setLoading(false);
         return;
       }
 
-      if (new Date(expiry) < new Date()) {
+      // Validate user context
+      if (!user || !user.uid) {
+        console.error('No user context found:', { user });
+        setMessage({ type: 'error', text: 'Please log in again.' });
+        setLoading(false);
+        return;
+      }
+
+      console.log('Checking event:', eventId);
+      if (expiry && new Date(expiry) < new Date()) {
         setMessage({ type: 'error', text: 'This QR code has expired.' });
         setLoading(false);
         return;
       }
 
-      const eventRef = doc(db, 'events', eventId);
-      const eventSnap = await getDoc(eventRef);
-      if (!eventSnap.exists()) {
-        setMessage({ type: 'error', text: 'Event not found or invalid QR.' });
+      // Firebase operations wrapped in try-catch
+      let eventData;
+      try {
+        const eventRef = doc(db, 'events', eventId);
+        const eventSnap = await getDoc(eventRef);
+        console.log('Event lookup result:', { exists: eventSnap.exists() });
+
+        if (!eventSnap.exists()) {
+          setMessage({ type: 'error', text: 'Event not found or invalid QR.' });
+          setLoading(false);
+          return;
+        }
+        eventData = eventSnap.data();
+        console.log('Event data:', eventData);
+      } catch (dbErr) {
+        console.error('Firebase event lookup failed:', dbErr);
+        setMessage({ type: 'error', text: 'Database error: ' + dbErr.message });
         setLoading(false);
         return;
       }
-
-      const eventData = eventSnap.data();
 
       // Time window check (if stored as timestamp objects or Date)
       if (eventData.endTime && eventData.endTime.toDate && new Date(eventData.endTime.toDate()) < new Date()) {
@@ -482,22 +526,41 @@ const AttendanceSystem = () => {
         }
       }
 
-      const attendanceRef = doc(collection(db, 'attendance'));
-      await setDoc(attendanceRef, {
+      // Create attendance record with detailed logging
+      console.log('Creating attendance record for:', {
         eventId,
         userId: user.uid,
-        userName: user.name,
-        userEmail: user.email,
-        timestamp: serverTimestamp(),
-        deviceInfo: { deviceId, userAgent: navigator.userAgent },
-        location: {
-          lat: location.lat,
-          lng: location.lng,
-          accuracy: location.accuracy || 0
-        },
-        checkedInAt: new Date().toISOString(),
-        status: 'present'
+        location: location
       });
+
+      try {
+        const attendanceRef = doc(collection(db, 'attendance'));
+        const attendanceData = {
+          eventId,
+          userId: user.uid,
+          userName: user.name || '',
+          userEmail: user.email || '',
+          timestamp: serverTimestamp(),
+          deviceInfo: { deviceId, userAgent: navigator.userAgent },
+          location: {
+            lat: location.lat,
+            lng: location.lng,
+            accuracy: location.accuracy || 0
+          },
+          checkedInAt: new Date().toISOString(),
+          status: 'present'
+        };
+
+        console.log('Attendance data to save:', attendanceData);
+        await setDoc(attendanceRef, attendanceData);
+        console.log('Attendance record saved successfully');
+
+        showMessage('Attendance marked successfully!', 'success');
+        setScanInput('');
+      } catch (dbErr) {
+        console.error('Failed to save attendance:', dbErr);
+        throw new Error('Failed to save attendance: ' + dbErr.message);
+      }
 
       // Optionally increment count
       try {
@@ -511,8 +574,20 @@ const AttendanceSystem = () => {
       showMessage(`Attendance marked for ${eventData.name}!`, 'success');
       setScanInput('');
     } catch (err) {
-      console.error('Error while scanning attendance:', err);
-      setMessage({ type: 'error', text: 'Error marking attendance.' });
+      console.error('Error while marking attendance:', err);
+      console.error('Full error details:', {
+        error: err,
+        stack: err.stack,
+        user: user?.uid,
+        location: location ? 'present' : 'missing'
+      });
+      let errorMsg = 'Error marking attendance.';
+      if (err.code === 'permission-denied') {
+        errorMsg = 'Permission denied. Please check your login status.';
+      } else if (err.code === 'not-found') {
+        errorMsg = 'Event not found. Please check the QR code.';
+      }
+      setMessage({ type: 'error', text: errorMsg });
     } finally {
       setLoading(false);
       // if scanner triggered and we closed scanner, ensure cameraOpen false
@@ -823,7 +898,10 @@ const AttendanceSystem = () => {
                 <div className="mt-8 text-center">
                   <h3 className="text-lg font-semibold text-gray-800 mb-4">Generated QR</h3>
                   <div className="flex justify-center">
-                    <img src={qrData} alt="Event QR" className="w-56 h-56" />
+                    <img
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${qrData}`}
+                      alt="Event QR"
+                      className="w-56 h-56" />
                   </div>
                   <p className="text-sm text-gray-500 mt-3">Use this QR for attendees</p>
                   <button
@@ -968,6 +1046,23 @@ const AttendanceSystem = () => {
                 {loading ? 'Marking...' : 'Mark Attendance'}
               </button>
             </form>
+
+            {/* Show recent attendance records */}
+            {attendanceRecords.length > 0 && (
+              <div className="mt-6 border-t border-gray-200 pt-6">
+                <h3 className="text-sm font-medium text-gray-700 mb-3">Your Recent Attendance:</h3>
+                <div className="space-y-2">
+                  {attendanceRecords.slice(0, 3).map(record => (
+                    <div key={record.id} className="bg-gray-50 p-3 rounded-lg text-sm">
+                      <div className="font-medium text-gray-900">
+                        {new Date(record.checkedInAt).toLocaleDateString()}
+                      </div>
+                      <div className="text-gray-500">{record.status}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {cameraOpen && (
               // Scanner overlay (simple modal style)
