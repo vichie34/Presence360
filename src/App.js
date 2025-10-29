@@ -2,7 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   Camera, QrCode, MapPin, Users, Calendar, LogOut,
-  Shield, AlertCircle, CheckCircle, XCircle, Download
+  Shield, AlertCircle, CheckCircle, XCircle, Download,
+  Edit, Trash2
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -96,6 +97,8 @@ const AttendanceSystem = () => {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
   const [location, setLocation] = useState(null);
+  const [editingEvent, setEditingEvent] = useState(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   // Auth / form states
   const [email, setEmail] = useState('');
@@ -254,7 +257,15 @@ const AttendanceSystem = () => {
     const eventsCol = collection(db, 'events');
     eventsUnsub = onSnapshot(eventsCol, (snap) => {
       const arr = [];
-      snap.forEach(docSnap => arr.push({ id: docSnap.id, ...docSnap.data() }));
+      const now = new Date();
+      snap.forEach(docSnap => {
+        const event = { id: docSnap.id, ...docSnap.data() };
+        // Only include events that haven't ended yet
+        const endTime = new Date(event.endTime);
+        if (endTime > now) {
+          arr.push(event);
+        }
+      });
       setEvents(arr);
     });
 
@@ -333,6 +344,58 @@ const AttendanceSystem = () => {
     a.href = qrData;
     a.download = `event_qr.png`;
     a.click();
+  };
+
+  // ---------- EVENT: Delete Event ----------
+  const deleteEvent = async (eventId) => {
+    if (!window.confirm('Are you sure you want to delete this event? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await setDoc(doc(db, 'events', eventId), { deleted: true }, { merge: true });
+      showMessage('Event deleted successfully', 'success');
+    } catch (err) {
+      console.error('Error deleting event:', err);
+      showMessage('Failed to delete event: ' + err.message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ---------- EVENT: Edit Event ----------
+  const handleEditEvent = async (event) => {
+    setEditingEvent(event);
+    setEventName(event.name);
+    setStartTime(event.startTime instanceof Date ? event.startTime.toISOString().slice(0, 16) : event.startTime);
+    setEndTime(event.endTime instanceof Date ? event.endTime.toISOString().slice(0, 16) : event.endTime);
+    setIsEditModalOpen(true);
+  };
+
+  const saveEventEdit = async () => {
+    if (!editingEvent) return;
+
+    try {
+      setLoading(true);
+      const eventRef = doc(db, 'events', editingEvent.id);
+
+      await updateDoc(eventRef, {
+        name: eventName,
+        startTime: new Date(startTime),
+        endTime: new Date(endTime),
+        updatedAt: serverTimestamp()
+      });
+
+      setIsEditModalOpen(false);
+      setEditingEvent(null);
+      showMessage('Event updated successfully', 'success');
+    } catch (err) {
+      console.error('Error updating event:', err);
+      showMessage('Failed to update event: ' + err.message, 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   // ---------- EXPORT: Export Attendance CSV (added) ----------
@@ -934,15 +997,35 @@ const AttendanceSystem = () => {
                         <div className="flex-1">
                           <h3 className="font-semibold text-gray-800">{evt.name}</h3>
                         </div>
-                        <button
-                          onClick={() => {
-                            exportAttendance(evt);
-                          }}
-                          className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
-                          title="Export Attendance"
-                        >
-                          <Download className="w-4 h-4" />
-                        </button>
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={() => handleEditEvent(evt)}
+                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                            title="Edit Event"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => deleteEvent(evt.id)}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                            title="Delete Event"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="3 6 5 6 21 6"></polyline>
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => exportAttendance(evt)}
+                            className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+                            title="Export Attendance"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                       <p className="text-xs text-gray-500 mb-2">
                         {evt.startTime ? (evt.startTime.toDate ? new Date(evt.startTime.toDate()).toLocaleString() : new Date(evt.startTime).toLocaleString()) : ''} — {evt.endTime ? (evt.endTime.toDate ? new Date(evt.endTime.toDate()).toLocaleString() : new Date(evt.endTime).toLocaleString()) : ''}
