@@ -254,7 +254,15 @@ const AttendanceSystem = () => {
     const eventsCol = collection(db, 'events');
     eventsUnsub = onSnapshot(eventsCol, (snap) => {
       const arr = [];
-      snap.forEach(docSnap => arr.push({ id: docSnap.id, ...docSnap.data() }));
+      const now = new Date();
+      snap.forEach(docSnap => {
+        const event = { id: docSnap.id, ...docSnap.data() };
+        // Only include events that haven't ended yet
+        const endTime = new Date(event.endTime);
+        if (endTime > now) {
+          arr.push(event);
+        }
+      });
       setEvents(arr);
     });
 
@@ -336,23 +344,76 @@ const AttendanceSystem = () => {
   };
 
   // ---------- EXPORT: Export Attendance CSV (added) ----------
+  // const exportAttendance = async (event) => {
+  //   try {
+  //     setLoading(true);
+  //     const q = query(collection(db, 'attendance'), where('eventId', '==', event.id));
+  //     const snap = await getDocs(q);
+
+  //     // Build rows with proper CSV escaping
+  //     const rows = [
+  //       ['Name', 'Email', 'Check-in Time', 'Latitude', 'Longitude', 'Accuracy (m)']
+  //     ];
+
+  //     snap.forEach(docSnap => {
+  //       const a = docSnap.data();
+  //       rows.push([
+  //         a.userName || '',
+  //         a.userEmail || '',
+  //         a.checkedInAt || (a.timestamp ? (a.timestamp.toDate ? a.timestamp.toDate().toISOString() : String(a.timestamp)) : ''),
+  //         a.location?.lat ?? '',
+  //         a.location?.lng ?? '',
+  //         a.location?.accuracy ?? ''
+  //       ]);
+  //     });
+
+  //     const csv = rows.map(row => row
+  //       .map(cell => `"${String(cell).replace(/"/g, '""')}"`)
+  //       .join(',')
+  //     ).join('\n');
+
+  //     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  //     const url = URL.createObjectURL(blob);
+  //     const a = document.createElement('a');
+  //     a.href = url;
+
+  //     const filenameSafe = (event.name || event.id).replace(/\s+/g, '_').replace(/[^\w\-_.]/g, '');
+  //     a.download = `${filenameSafe}_attendance.csv`;
+  //     a.click();
+  //     URL.revokeObjectURL(url);
+  //     showMessage('Export ready — download started.', 'success');
+  //   } catch (err) {
+  //     console.error('exportAttendance error:', err);
+  //     showMessage('Export failed: ' + err.message, 'error');
+  //   } finally {
+  //     setLoading(false);
+  //   }
+  // };
   const exportAttendance = async (event) => {
     try {
       setLoading(true);
       const q = query(collection(db, 'attendance'), where('eventId', '==', event.id));
       const snap = await getDocs(q);
 
-      // Build rows with proper CSV escaping
+      // Build rows with proper CSV escaping and separate date/time columns with 12-hour format
       const rows = [
-        ['Name', 'Email', 'Check-in Time', 'Latitude', 'Longitude', 'Accuracy (m)']
+        ['Name', 'Email', 'Date', 'Time', 'Latitude', 'Longitude', 'Accuracy (m)']
       ];
 
       snap.forEach(docSnap => {
         const a = docSnap.data();
+        const checkedInDate = a.checkedInAt ? new Date(a.checkedInAt) :
+          (a.timestamp ? (a.timestamp.toDate ? a.timestamp.toDate() : new Date(a.timestamp)) : new Date());
+
         rows.push([
           a.userName || '',
           a.userEmail || '',
-          a.checkedInAt || (a.timestamp ? (a.timestamp.toDate ? a.timestamp.toDate().toISOString() : String(a.timestamp)) : ''),
+          checkedInDate.toLocaleDateString('en-US'), // MM/DD/YYYY
+          checkedInDate.toLocaleTimeString('en-US', {
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          }), // 12-hour format (e.g., "2:30 PM")
           a.location?.lat ?? '',
           a.location?.lng ?? '',
           a.location?.accuracy ?? ''
